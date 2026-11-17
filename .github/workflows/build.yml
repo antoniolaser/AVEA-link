@@ -14,10 +14,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Se il progetto e' stato caricato come file zip, qui si scompatta.
+      # Scompatta SOLO lo zip con il numero di versione piu' alto: se nel repository
+      # ce ne sono piu' d'uno, gli altri vengono ignorati.
       - name: Scompatta il progetto
         run: |
-          find . -path ./.git -prune -o -iname '*.zip' -print | while read -r z; do echo "Scompatto: $z"; unzip -o -q "$z" -d "_zip"; done
+          Z=$(find . -path ./.git -prune -o -iname '*.zip' -print | sort -V | tail -1)
+          if [ -n "$Z" ]; then
+            echo "Uso solo lo zip piu' recente: $Z"
+            unzip -o -q "$Z" -d "_zip"
+          fi
           if [ ! -f settings.gradle ]; then
             S=$(find . -path ./.git -prune -o -name settings.gradle -print | awk '{ print length, $0 }' | sort -n | head -1 | cut -d' ' -f2-)
             if [ -n "$S" ]; then D=$(dirname "$S"); echo "Progetto trovato in: $D"; cp -r "$D"/. . ; fi
@@ -27,6 +32,10 @@ jobs:
           fi
           echo "File del progetto:"; ls -la
           if [ ! -f settings.gradle ]; then echo "::error::Nel repository non c'e' il progetto: carica lo zip nella pagina principale"; exit 1; fi
+
+      # Scritto nel log: cosi' si vede subito se e' stato preso lo zip giusto.
+      - name: Versione che sto compilando
+        run: grep -E "versionName|versionCode" app/build.gradle
 
       - uses: actions/setup-java@v4
         with:
