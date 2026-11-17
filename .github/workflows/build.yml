@@ -1,1 +1,79 @@
+name: Crea APK
 
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Se il progetto e' stato caricato come file zip, qui si scompatta.
+      - name: Scompatta il progetto
+        run: |
+          find . -path ./.git -prune -o -iname '*.zip' -print | while read -r z; do echo "Scompatto: $z"; unzip -o -q "$z" -d "_zip"; done
+          if [ ! -f settings.gradle ]; then
+            S=$(find . -path ./.git -prune -o -name settings.gradle -print | awk '{ print length, $0 }' | sort -n | head -1 | cut -d' ' -f2-)
+            if [ -n "$S" ]; then D=$(dirname "$S"); echo "Progetto trovato in: $D"; cp -r "$D"/. . ; fi
+          elif [ -d _zip ]; then
+            S=$(find _zip -name settings.gradle | awk '{ print length, $0 }' | sort -n | head -1 | cut -d' ' -f2-)
+            if [ -n "$S" ]; then cp -r "$(dirname "$S")"/. . ; fi
+          fi
+          echo "File del progetto:"; ls -la
+          if [ ! -f settings.gradle ]; then echo "::error::Nel repository non c'e' il progetto: carica lo zip nella pagina principale"; exit 1; fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      # La chiave di firma non sta nel repository: si ricostruisce qui dai Secrets
+      # e viene cancellata subito dopo. Senza Secrets l'APK esce firmato in debug.
+      - name: Prepara la chiave di firma
+        env:
+          KS: ${{ secrets.AVEA_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KS" ]; then
+            printf '%s' "$KS" | base64 -d > "$RUNNER_TEMP/avea.jks"
+            echo "AVEA_STORE_FILE=$RUNNER_TEMP/avea.jks" >> "$GITHUB_ENV"
+            echo "Chiave di firma pronta."
+          else
+            echo "Nessun Secret della chiave: l'APK uscira' firmato in debug."
+          fi
+
+      - name: Compila l'APK
+        env:
+          AVEA_STORE_PASSWORD: ${{ secrets.AVEA_STORE_PASSWORD }}
+          AVEA_KEY_ALIAS: ${{ secrets.AVEA_KEY_ALIAS }}
+          AVEA_KEY_PASSWORD: ${{ secrets.AVEA_KEY_PASSWORD }}
+        run: gradle :app:assembleRelease --no-daemon
+
+      - name: Cancella la chiave dal runner
+        if: always()
+        run: rm -f "$RUNNER_TEMP/avea.jks"
+
+      - name: Rinomina
+        run: cp app/build/outputs/apk/release/app-release.apk AVEA-Link.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AVEA-Link-apk
+          path: AVEA-Link.apk
+
+      # Ultimo APK sempre nella pagina "Releases": si scarica dal telefono.
+      - name: Pubblica in Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-${{ github.run_number }}"
+          gh release create "$TAG" AVEA-Link.apk --title "AVEA Link ${{ github.run_number }}" --notes "APK creato da GitHub dal commit ${{ github.sha }}" --latest
