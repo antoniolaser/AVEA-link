@@ -37,33 +37,17 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      # La chiave di firma non sta nel repository: si ricostruisce qui dai Secrets
-      # e viene cancellata subito dopo. Senza Secrets l'APK esce firmato in debug.
-      - name: Prepara la chiave di firma
-        env:
-          KS: ${{ secrets.AVEA_KEYSTORE_BASE64 }}
-        run: |
-          if [ -n "$KS" ]; then
-            printf '%s' "$KS" | base64 -d > "$RUNNER_TEMP/avea.jks"
-            echo "AVEA_STORE_FILE=$RUNNER_TEMP/avea.jks" >> "$GITHUB_ENV"
-            echo "Chiave di firma pronta."
-          else
-            echo "Nessun Secret della chiave: l'APK uscira' firmato in debug."
-          fi
-
+      # Nessuna chiave di firma: si compila la variante debug, che Gradle firma da se'.
+      # L'APK si installa, ma la chiave cambia a ogni compilazione: per aggiornare
+      # bisogna disinstallare prima la versione precedente.
       - name: Compila l'APK
-        env:
-          AVEA_STORE_PASSWORD: ${{ secrets.AVEA_STORE_PASSWORD }}
-          AVEA_KEY_ALIAS: ${{ secrets.AVEA_KEY_ALIAS }}
-          AVEA_KEY_PASSWORD: ${{ secrets.AVEA_KEY_PASSWORD }}
-        run: gradle :app:assembleRelease --no-daemon
-
-      - name: Cancella la chiave dal runner
-        if: always()
-        run: rm -f "$RUNNER_TEMP/avea.jks"
+        run: gradle :app:assembleDebug --no-daemon
 
       - name: Rinomina
-        run: cp app/build/outputs/apk/release/app-release.apk AVEA-Link.apk
+        run: |
+          A=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
+          echo "APK trovato: $A"
+          cp "$A" AVEA-Link.apk
 
       - uses: actions/upload-artifact@v4
         with:
@@ -76,4 +60,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="build-${{ github.run_number }}"
-          gh release create "$TAG" AVEA-Link.apk --title "AVEA Link ${{ github.run_number }}" --notes "APK creato da GitHub dal commit ${{ github.sha }}" --latest
+          gh release create "$TAG" AVEA-Link.apk --title "AVEA Link ${{ github.run_number }}" --notes "APK firmato in debug. Per aggiornare, disinstallare prima la versione precedente." --latest
